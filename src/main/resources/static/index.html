@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My PDF Tools</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f9;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 { text-align: center; color: #2c3e50; }
+        .tool-card {
+            background-color: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .tool-card h2 { margin-top: 0; color: #34495e; }
+        button {
+            background-color: #3498db; color: white; border: none;
+            padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 16px;
+        }
+        button:hover { background-color: #2980b9; }
+        button:disabled { background-color: #bdc3c7; cursor: not-allowed; }
+
+        .secondary-btn { background-color: #7f8c8d; margin-bottom: 10px; }
+        .secondary-btn:hover { background-color: #95a5a6; }
+
+        .danger-btn { background-color: #e74c3c; margin-bottom: 10px; margin-left: 10px; }
+        .danger-btn:hover { background-color: #c0392b; }
+
+        .file-list-container {
+            margin-bottom: 15px; padding: 0; list-style-type: none;
+            max-height: 200px; overflow-y: auto;
+        }
+
+        .file-item {
+            background-color: #e8f4f8; margin-bottom: 5px; padding: 8px 12px;
+            border-radius: 4px; font-family: monospace; font-size: 14px;
+            display: inline-block; margin-right: 5px;
+        }
+    </style>
+</head>
+<body>
+
+<h1>Abdel's PDF Converter</h1>
+
+<div class="tool-card">
+    <h2>Merge Multiple PDFs</h2>
+    <p>Select two or more PDF files to combine them into one.</p>
+    <form id="merge-form" action="/api/pdf/merge">
+        <input type="file" id="merge-hidden" accept=".pdf" multiple style="display: none;">
+        <div>
+            <button type="button" id="merge-add" class="secondary-btn">+ Add PDFs</button>
+            <button type="button" id="merge-clear" class="danger-btn" style="display: none;">Clear List</button>
+        </div>
+        <ul id="merge-list" class="file-list-container"></ul>
+        <button type="submit" id="merge-submit" disabled>Merge PDFs</button>
+    </form>
+</div>
+
+<div class="tool-card">
+    <h2>Convert HEIC to PDF</h2>
+    <p>Upload iPhone HEIC images to convert them.</p>
+    <form id="heic-form" action="/api/pdf/heic-to-pdf">
+        <input type="file" id="heic-hidden" accept=".heic" multiple style="display: none;">
+        <div>
+            <button type="button" id="heic-add" class="secondary-btn">+ Add HEICs</button>
+            <button type="button" id="heic-clear" class="danger-btn" style="display: none;">Clear List</button>
+        </div>
+        <ul id="heic-list" class="file-list-container"></ul>
+        <button type="submit" id="heic-submit" disabled>Convert HEICs</button>
+    </form>
+</div>
+
+<div class="tool-card">
+    <h2>Convert TXT to PDF</h2>
+    <p>Upload text files to generate PDF documents.</p>
+    <form id="txt-form" action="/api/pdf/txt-to-pdf">
+        <input type="file" id="txt-hidden" accept=".txt" multiple style="display: none;">
+        <div>
+            <button type="button" id="txt-add" class="secondary-btn">+ Add TXTs</button>
+            <button type="button" id="txt-clear" class="danger-btn" style="display: none;">Clear List</button>
+        </div>
+        <ul id="txt-list" class="file-list-container"></ul>
+        <button type="submit" id="txt-submit" disabled>Convert TXTs</button>
+    </form>
+</div>
+
+<script>
+    // Helper function to trigger a hidden download in the browser
+    function downloadFile(blob, filename) {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+    }
+
+    // Reusable uploader logic
+    function setupUploader(config) {
+        const hiddenInput = document.getElementById(config.inputId);
+        const addBtn = document.getElementById(config.addBtnId);
+        const clearBtn = document.getElementById(config.clearBtnId);
+        const fileList = document.getElementById(config.listId);
+        const submitBtn = document.getElementById(config.submitBtnId);
+        const form = document.getElementById(config.formId);
+
+        // Dynamically grab the endpoint from the form's action attribute
+        const endpoint = form.getAttribute('action');
+        let dataTransfer = new DataTransfer();
+
+        // 1. Open file dialog
+        addBtn.addEventListener('click', () => hiddenInput.click());
+
+        // 2. Add files to memory cart WITH SIZE VALIDATION
+        hiddenInput.addEventListener('change', function() {
+            const MAX_SINGLE_FILE_SIZE = 15 * 1024 * 1024; // 15 MB in bytes
+            const MAX_TOTAL_SIZE = 20 * 1024 * 1024;       // 20 MB in bytes
+            const MAX_FILE_COUNT = 50;                     // NEW: Hard limit on file count
+
+            let currentTotalSize = 0;
+            for (let i = 0; i < dataTransfer.files.length; i++) {
+                currentTotalSize += dataTransfer.files[i].size;
+            }
+
+            let newTotalSize = currentTotalSize;
+            let filesToAdd = [];
+
+            for (let i = 0; i < this.files.length; i++) {
+                // Rule 3: Check maximum file count before adding
+                if (dataTransfer.files.length + filesToAdd.length >= MAX_FILE_COUNT) {
+                    alert(`You can only process up to ${MAX_FILE_COUNT} files at a time.`);
+                    break; // Stop adding files entirely
+                }
+
+                let file = this.files[i];
+
+                if (file.size > MAX_SINGLE_FILE_SIZE) {
+                    alert(`File exceeds 15 MB size limit`);
+                    continue;
+                }
+
+                if (newTotalSize + file.size > MAX_TOTAL_SIZE) {
+                    alert('Files cannot exceed 20 MB size limit');
+                    break;
+                }
+
+                newTotalSize += file.size;
+                filesToAdd.push(file);
+            }
+
+            for (let file of filesToAdd) {
+                dataTransfer.items.add(file);
+            }
+
+            updateUI();
+        });
+
+        // 3. Clear cart
+        clearBtn.addEventListener('click', () => {
+            dataTransfer = new DataTransfer();
+            updateUI();
+        });
+
+        // 4. Update the visual UI
+        function updateUI() {
+            fileList.innerHTML = '';
+            const fileCount = dataTransfer.files.length;
+
+            clearBtn.style.display = fileCount > 0 ? 'inline-block' : 'none';
+            submitBtn.disabled = config.isMerge ? fileCount < 2 : fileCount < 1;
+
+            for (let i = 0; i < fileCount; i++) {
+                let li = document.createElement('li');
+                li.className = 'file-item';
+
+                let fullName = dataTransfer.files[i].name;
+                let displayName = fullName.length > 15
+                    ? fullName.substring(0, 10) + '...' + fullName.substring(fullName.lastIndexOf('.'))
+                    : fullName;
+
+                li.textContent = displayName;
+                fileList.appendChild(li);
+            }
+
+            // Safely clear the input so the same file can be selected again
+            hiddenInput.value = '';
+        }
+
+        // 5. Intercept Form Submission completely
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault(); // Stop standard behavior
+
+            const originalText = submitBtn.textContent;
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Processing...';
+
+            const files = Array.from(dataTransfer.files);
+
+            try {
+                if (config.isMerge) {
+                    // MERGE LOGIC: Send ALL files in one big package
+                    const formData = new FormData();
+                    files.forEach(file => formData.append('files', file));
+
+                    const response = await fetch(endpoint, { method: 'POST', body: formData });
+
+                    if (response.ok) {
+                        const blob = await response.blob();
+
+                        // Name the merged file after the FIRST file in the list
+                        let firstFileName = files[0].name;
+                        let lastDot = firstFileName.lastIndexOf('.');
+                        let baseName = lastDot !== -1 ? firstFileName.substring(0, lastDot) : firstFileName;
+
+                        downloadFile(blob, 'merged_' + baseName + '.pdf');
+                    } else if (response.status === 429) {
+                        alert("You're converting too fast. Please wait 60 seconds.");
+                    } else {
+                        alert('Server Error: Could not merge files.');
+                    }
+                } else {
+                    // CONVERSION LOGIC: Loop through and send files one by one
+                    for (let file of files) {
+                        const formData = new FormData();
+                        formData.append('file', file);
+
+                        const response = await fetch(endpoint, { method: 'POST', body: formData });
+
+                        if (response.ok) {
+                            const blob = await response.blob();
+
+                            // Extract the original exact name and swap the extension
+                            let originalName = file.name;
+                            let lastDot = originalName.lastIndexOf('.');
+                            let baseName = lastDot !== -1 ? originalName.substring(0, lastDot) : originalName;
+
+                            downloadFile(blob, baseName + '.pdf');
+
+                            // --- PHYSICAL REMOVAL LOGIC ---
+                            // Create a fresh DataTransfer and add everything EXCEPT the completed file
+                            let updatedDataTransfer = new DataTransfer();
+                            for (let pendingFile of dataTransfer.files) {
+                                if (pendingFile !== file) {
+                                    updatedDataTransfer.items.add(pendingFile);
+                                }
+                            }
+                            dataTransfer = updatedDataTransfer;
+
+                            // --- VISUAL REMOVAL LOGIC ---
+                            // Redraw the list based on our newly updated DataTransfer
+                            updateUI();
+
+                        } else if (response.status === 429) {
+                            alert("You've hit the conversion limit. Please wait 60 seconds, then click Convert again.");
+                            break; // Stop the loop! The remaining items are still in the DataTransfer and UI.
+                        } else {
+                            alert('Failed to convert: ' + file.name);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('A network error occurred.');
+            } finally {
+                // Reset the button state
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalText;
+            }
+        });
+    }
+
+    // Initialize all three tools
+    setupUploader({
+        inputId: 'merge-hidden', addBtnId: 'merge-add', clearBtnId: 'merge-clear',
+        listId: 'merge-list', submitBtnId: 'merge-submit', formId: 'merge-form',
+        isMerge: true
+    });
+
+    setupUploader({
+        inputId: 'heic-hidden', addBtnId: 'heic-add', clearBtnId: 'heic-clear',
+        listId: 'heic-list', submitBtnId: 'heic-submit', formId: 'heic-form',
+        isMerge: false
+    });
+
+    setupUploader({
+        inputId: 'txt-hidden', addBtnId: 'txt-add', clearBtnId: 'txt-clear',
+        listId: 'txt-list', submitBtnId: 'txt-submit', formId: 'txt-form',
+        isMerge: false
+    });
+</script>
+</body>
+</html>
