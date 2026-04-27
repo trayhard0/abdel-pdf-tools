@@ -11,7 +11,7 @@ RUN mvn clean package -DskipTests
 FROM eclipse-temurin:17-jre-alpine
 WORKDIR /app
 
-RUN apk add --no-cache imagemagick
+RUN apk add --no-cache imagemagick imagemagick-heic
 
 # Copy the built JAR from the previous stage
 COPY --from=build /app/target/*.jar app.jar
